@@ -1,0 +1,14 @@
+level,measure,controls,estimator,n_units,n_countries,bsf,rate_ratio,rr_lo95,rr_hi95,p,turning_point_gdp
+national,"GDP per capita, squared term",temperature band,PPML,214,214,19949,1.4041,0.0874,22.5545,0.8107,
+national,"GDP per capita, squared term",temperature band,NegBin,214,214,19949,0.2213,0.0822,0.5956,0.0028,11229.9595
+admin-1,"GDP per capita, squared term",climate zone,PPML,1982,97,17555,1.6085,0.1749,14.7906,0.6746,
+admin-1 within country,"GDP per capita, squared term",climate zone + country,PPML,1768,74,17555,0.3824,0.147,0.9945,0.0487,85627.0406
+national,GDP per capita,none,PPML,214,214,19949,0.2811,0.0727,1.0875,0.066,
+national,GDP per capita,none,NegBin,214,214,19949,0.6358,0.3532,1.1446,0.1311,
+national,GDP per capita,temperature band,PPML,214,214,19949,1.7519,0.5059,6.066,0.3763,
+national,GDP per capita,temperature band,NegBin,214,214,19949,0.9789,0.5661,1.6926,0.9391,
+national,GDP per capita,"temperature band, excl. USA",PPML,213,213,12102,1.0681,0.4458,2.5588,0.8825,
+national,HDI (per 0.1),temperature band,PPML,193,193,19861,1.0097,0.7675,1.3283,0.9453,
+admin-1,GDP per capita,climate zone,PPML,1982,97,17555,2.0839,0.828,5.2447,0.1189,
+admin-1 within country,GDP per capita,climate zone + country,PPML,1768,74,17555,3.0247,1.434,6.3797,0.0037,
+admin-1 within country,GDP per capita,"climate zone + country, excl. USA",PPML,1717,73,10037,3.6751,1.672,8.078,0.0012,
