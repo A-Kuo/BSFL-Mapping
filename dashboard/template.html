@@ -1,0 +1,598 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Black Soldier Fly record rate by region, climate and development</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  :root {
+    --fg: #1f2328; --muted: #656d76; --faint: #8c959f; --line: #e3e5e8; --bg: #ffffff; --panel: #f7f8fa;
+    --accent: #5b3a9e; --accent-soft: #ece6f6;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; font: 13px/1.45 -apple-system, "Segoe UI", system-ui, sans-serif; color: var(--fg); background: var(--bg); }
+  .app { display: grid; grid-template-rows: auto 1fr; height: 100vh; }
+  header { display: flex; align-items: flex-end; gap: 32px; padding: 14px 20px 12px; border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 18px; font-weight: 600; margin: 0 0 2px; }
+  header .sub { color: var(--muted); font-size: 12px; max-width: 640px; }
+  .kpis { display: flex; gap: 26px; margin-left: auto; }
+  .kpi .v { font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .kpi .l { color: var(--muted); font-size: 11px; }
+  .main { display: grid; grid-template-columns: 1fr 440px; min-height: 0; }
+  #map { height: 100%; background: #f2f3f5; }
+  aside { border-left: 1px solid var(--line); overflow-y: auto; }
+  section { padding: 14px 18px; border-bottom: 1px solid var(--line); }
+  section h2 { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 10px; }
+  section h4 { font-size: 12px; font-weight: 600; margin: 14px 0 4px; }
+  .row { display: flex; gap: 10px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+  .row label.k { width: 92px; color: var(--muted); }
+  select { font: inherit; padding: 3px 6px; border: 1px solid var(--line); border-radius: 4px; background: #fff; max-width: 260px; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 5px; overflow: hidden; }
+  .seg button { font: inherit; border: 0; background: #fff; padding: 4px 9px; cursor: pointer; color: var(--fg); }
+  .seg button + button { border-left: 1px solid var(--line); }
+  .seg button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+  .check { display: flex; gap: 6px; align-items: center; cursor: pointer; }
+  .note { color: var(--muted); font-size: 12px; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th { text-align: left; font-weight: 500; color: var(--muted); font-size: 11px; padding: 4px; border-bottom: 1px solid var(--line); }
+  td { padding: 4px; border-bottom: 1px solid #f0f1f3; vertical-align: top; }
+  td.n, th.n { text-align: right; }
+  tr.click { cursor: pointer; }
+  tr.click:hover td { background: var(--panel); }
+  tr.sel td { background: var(--accent-soft); }
+  .sw { display: inline-block; width: 12px; height: 12px; border-radius: 2px; vertical-align: -2px; margin-right: 6px; border: 1px solid rgba(0,0,0,.08); }
+  .bar { height: 6px; background: var(--accent); border-radius: 1px; }
+  .detail h3 { font-size: 16px; margin: 0; font-weight: 600; }
+  .detail .meta { color: var(--muted); margin-bottom: 10px; }
+  .big { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--accent); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 16px; margin: 10px 0; }
+  .grid2 .l { color: var(--muted); font-size: 11px; }
+  .grid2 .v { font-variant-numeric: tabular-nums; }
+  .pill { display: inline-block; padding: 0 7px; border-radius: 9px; font-size: 11px; border: 1px solid var(--line); white-space: nowrap; }
+  .pill.high { color: #1a7f37; border-color: #b7dfc2; }
+  .pill.medium { color: #9a6700; border-color: #ecd9a6; }
+  .pill.low { color: #b4232c; border-color: #f0bcc0; }
+  .finding { border-left: 2px solid var(--accent); padding: 2px 0 2px 10px; margin: 0 0 10px; }
+  .finding b { font-variant-numeric: tabular-nums; }
+  .legend { background: rgba(255,255,255,.95); padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; font-size: 11px; color: var(--fg); }
+  .legend .t { font-weight: 600; margin-bottom: 6px; }
+  .biv { display: grid; grid-template-columns: 70px repeat(4, 46px); grid-template-rows: 30px; grid-auto-rows: 24px; gap: 2px; align-items: center; }
+  .biv .cell { width: 46px; height: 24px; border-radius: 2px; cursor: pointer; border: 1px solid transparent; }
+  .biv .cell.dim { opacity: .25; }
+  .biv .ax { color: var(--muted); text-align: center; font-size: 10px; line-height: 1.2; align-self: end; }
+  .biv .ay { color: var(--muted); text-align: right; padding-right: 6px; font-size: 10px; line-height: 1.2; white-space: nowrap; }
+  .ramp { display: flex; height: 10px; width: 220px; border-radius: 2px; overflow: hidden; }
+  .ramp div { flex: 1; }
+  .ticks { display: flex; justify-content: space-between; width: 220px; color: var(--muted); font-size: 10px; margin-top: 2px; }
+  .leaflet-tooltip { font: 12px/1.4 -apple-system, "Segoe UI", system-ui, sans-serif; border-radius: 4px; box-shadow: none; border: 1px solid var(--line); }
+  .clear { font: inherit; font-size: 11px; color: var(--accent); background: none; border: 0; cursor: pointer; padding: 0; }
+  svg text { font: 10px -apple-system, "Segoe UI", system-ui, sans-serif; fill: var(--muted); }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div>
+      <h1>Black Soldier Fly (<i>Hermetia illucens</i>) record rate by region</h1>
+      <div class="sub">BSF records per 10,000 insect records on GBIF, for GADM admin-1 regions, pulled toward each region's pooling group. A record rate reflects who observes and where, not fly abundance.</div>
+    </div>
+    <div class="kpis" id="kpis"></div>
+  </header>
+  <div class="main">
+    <div id="map"></div>
+    <aside>
+      <section>
+        <h2>Controls</h2>
+        <div class="row"><label class="k">Map fill</label>
+          <div class="seg" id="fillSeg">
+            <button data-v="zone" class="on">Climate</button><button data-v="rate">BSF rate</button><button data-v="vsCountry">vs own country</button><button data-v="gdp">GDP per capita</button>
+          </div>
+        </div>
+        <div class="row"><label class="k">Country</label><select id="country"></select></div>
+        <div class="row"><label class="k">Years</label><select id="y0"></select><span class="note">to</span><select id="y1"></select></div>
+        <div class="row"><label class="k">Pool toward</label>
+          <select id="prior">
+            <option value="country">Region's country</option>
+            <option value="zone">Climate zone</option>
+            <option value="none">No pooling (raw rate)</option>
+          </select>
+        </div>
+        <div class="row"><label class="k">Prior strength</label>
+          <select id="k">
+            <option value="300">300 insect records</option>
+            <option value="1000" selected>1,000 insect records</option>
+            <option value="3000">3,000</option>
+            <option value="20000">20,000</option>
+          </select>
+        </div>
+        <div class="row" style="gap:16px">
+          <label class="check"><input type="checkbox" id="circles"> BSF rate circles</label>
+          <label class="check"><input type="checkbox" id="tiles"> Raw GBIF BSF records</label>
+          <label class="check"><input type="checkbox" id="hideLow"> Hide low confidence</label>
+        </div>
+      </section>
+      <section class="detail" id="detail"></section>
+      <section>
+        <h2>BSF record rate against economic development</h2>
+        <div id="findings"></div>
+        <div id="scatter"></div>
+        <div id="devCharts"></div>
+      </section>
+      <section>
+        <h2>Pooled rate by climate zone <button class="clear" id="clearZone" style="float:right;display:none">clear filter</button></h2>
+        <table id="zoneTable"></table>
+        <div class="note" style="margin-top:6px">Zones bin each region's mean annual temperature and precipitation (WorldClim 2.1, 1970-2000 normals, averaged over the region). Click a zone to filter the map.</div>
+      </section>
+      <section>
+        <h2>National pooling test</h2>
+        <table id="priorTable"></table>
+        <div class="note" style="margin-top:6px">Country-level estimates only. Each grouping's gain in leave-one-country-out predictive log-likelihood over grouping by World Bank region (negative binomial, 2010-2025), with a bootstrap 95% interval over countries. Gray means the interval crosses zero.</div>
+      </section>
+      <section>
+        <h2>Read with care</h2>
+        <div class="note">
+          <p style="margin-top:0">Most BSF records come from iNaturalist, while the insect denominator also includes museum and survey datasets. A high rate can mean active iNaturalist users as much as many flies.</p>
+          <p>Within-country GDP gradients may partly reflect urbanisation. Richer regions are more urban, and BSF is associated with compost and organic waste, but urban observers may also photograph it more readily.</p>
+          <p id="gdpNote"></p>
+          <p id="sources" style="margin-bottom:0"></p>
+        </div>
+      </section>
+    </aside>
+  </div>
+</div>
+<script>
+const DATA = __DATA__;
+const U = DATA.units, NU = U.gid1.length;
+
+const ZONE_COLORS = {
+  "cold-dry": "#cdd7e8", "cold-moist": "#93abd4", "cold-wet": "#5574b0",
+  "cool-dry": "#d3e5d6", "cool-moist": "#93c4a0", "cool-wet": "#44905d",
+  "warm-dry": "#f1e3bb", "warm-moist": "#e3bf63", "warm-wet": "#b98a2c",
+  "hot-dry":  "#f2cdbb", "hot-moist":  "#e08e67", "hot-wet":  "#ad4b2c",
+};
+const NO_DATA = "#e9eaec";
+const RATE_RAMP = ["#f2f0f7", "#dadaeb", "#bcbddc", "#9e9ac8", "#807dba", "#6a51a3", "#4a1486"];
+const RATE_DOMAIN = [0.3, 30];
+const RATIO_RAMP = ["#8c510a", "#d8b365", "#f6e8c3", "#f5f5f5", "#c7eae5", "#5ab4ac", "#01665e"];
+const GDP_RAMP = ["#f7fbff", "#deebf7", "#c6dbef", "#9ecae1", "#6baed6", "#3182bd", "#08519c"];
+const GDP_DOMAIN = [1000, 80000];
+const SCHEME_LABEL = {
+  global_: "Global (no grouping)", region: "World Bank region", temp_band: "Temperature band",
+  zone_merged: "Climate zone (temp x precip)", region_x_temp: "Region x temperature band",
+};
+const T = DATA.bands;
+const tempRange = i => i === 0 ? `<${T.temp_edges[0]}°C` : i === T.temp.length - 1 ? `>${T.temp_edges[i - 1]}°C` : `${T.temp_edges[i - 1]}-${T.temp_edges[i]}°C`;
+const precRange = i => i === 0 ? `<${T.precip_edges[0]} mm` : i === T.precip.length - 1 ? `>${T.precip_edges[i - 1]} mm` : `${T.precip_edges[i - 1]}-${T.precip_edges[i]} mm`;
+const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
+const zoneName = z => z ? z.split("-").map(cap).join(" · ") : "No climate normal";
+const fmt = (v, d = 0) => v == null || !isFinite(v) ? "–" : v.toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: d });
+const fmtRate = v => v == null || !isFinite(v) ? "–" : v >= 10 ? fmt(v, 1) : v >= 1 ? fmt(v, 2) : fmt(v, 3);
+const fmtUsd = v => v == null || !isFinite(v) ? "–" : "$" + (v >= 10000 ? fmt(v / 1000, 0) + "k" : fmt(v / 1000, 1) + "k");
+const countryName = iso => DATA.countries[iso]?.name || iso;
+
+const state = { fill: "zone", y0: DATA.default_window[0], y1: DATA.default_window[1], prior: "country", k: 1000,
+                circles: false, tiles: false, hideLow: false, zone: null, country: null, sel: null };
+
+// ---------- estimation ----------
+function gammaQ(a, b, z) {  // Wilson-Hilferty approximation to the Gamma(a, rate b) quantile
+  if (a <= 0) return 0;
+  const t = 1 - 1 / (9 * a) + z / (3 * Math.sqrt(a));
+  return Math.max(0, a * t * t * t / b);
+}
+let EST = [], CPOOL = {}, ZPOOL = {}, GLOBAL = 0;
+function compute() {
+  const i0 = DATA.years.indexOf(state.y0), i1 = DATA.years.indexOf(state.y1);
+  const sum = a => { let s = 0; for (let j = i0; j <= i1; j++) s += a[j] || 0; return s; };
+  const rows = [];
+  for (let i = 0; i < NU; i++) {
+    let lg = 0, ng = 0;
+    for (let j = i0; j <= i1; j++) { const g = U.gdp[i][j]; if (g > 0) { lg += Math.log(g); ng++; } }
+    rows.push({ B: sum(U.bsf[i]), I: sum(U.inat[i]), N: sum(U.ins[i]), gdp: ng ? Math.exp(lg / ng) : null });
+  }
+  const pool = key => {
+    const g = {};
+    rows.forEach((r, i) => { const k = key(i); if (k == null) return; (g[k] ??= { B: 0, N: 0, n: 0, nb: 0 }); g[k].B += r.B; g[k].N += r.N; if (r.N > 0) g[k].n++; if (r.B > 0) g[k].nb++; });
+    Object.values(g).forEach(v => v.rate = v.N > 0 ? v.B / v.N : null);
+    return g;
+  };
+  const totB = rows.reduce((s, r) => s + r.B, 0), totN = rows.reduce((s, r) => s + r.N, 0);
+  GLOBAL = totB / totN;
+  CPOOL = pool(i => U.iso3[i]);
+  ZPOOL = pool(i => U.zone[i]);
+  EST = rows.map((r, i) => {
+    const gk = state.prior === "country" ? U.iso3[i] : state.prior === "zone" ? U.zone[i] : null;
+    const P = state.prior === "country" ? CPOOL : ZPOOL;
+    const prior = state.prior === "none" ? null : (gk != null && P[gk]?.rate) || GLOBAL;
+    const k = state.prior === "none" ? 0 : state.k;
+    let est = null, lo = null, hi = null, w = null;
+    if (r.N > 0) {
+      if (k === 0) { est = r.B / r.N; w = 1; lo = gammaQ(r.B + 0.5, r.N, -1.96); hi = gammaQ(r.B + 0.5, r.N, 1.96); }
+      else { const a = k * prior + r.B, b = k + r.N; est = a / b; w = r.N / b; lo = gammaQ(a, b, -1.96); hi = gammaQ(a, b, 1.96); }
+    }
+    const spread = hi != null && lo > 0 ? hi / lo : Infinity;
+    const conf = w == null ? null : spread <= 1.5 ? "high" : spread <= 3 ? "medium" : "low";
+    const cr = CPOOL[U.iso3[i]]?.rate;
+    return { ...r, obs: r.N > 0 ? r.B / r.N * 1e4 : null, est: est == null ? null : est * 1e4,
+             lo: lo == null ? null : lo * 1e4, hi: hi == null ? null : hi * 1e4, w, conf,
+             prior: prior == null ? null : prior * 1e4, group: gk,
+             vsCountry: est != null && cr > 0 ? est / cr : null };
+  });
+  const nat = new Set(); rows.forEach((r, i) => { if (r.B > 0) nat.add(U.iso3[i]); });
+  return { totB, totN, totI: rows.reduce((s, r) => s + r.I, 0), withBsf: rows.filter(r => r.B > 0).length, countries: nat.size };
+}
+
+// ---------- colour ----------
+function rampColor(ramp, t) { return ramp[Math.max(0, Math.min(ramp.length - 1, Math.floor(t * ramp.length)))]; }
+function logColor(ramp, [lo, hi], v) { return v == null || !(v > 0) ? NO_DATA : rampColor(ramp, (Math.log10(v) - Math.log10(lo)) / (Math.log10(hi) - Math.log10(lo))); }
+function ratioColor(r) { return r == null ? NO_DATA : rampColor(RATIO_RAMP, (Math.log2(r) + 2) / 4); }
+function fillFor(i) {
+  const e = EST[i];
+  if (state.fill === "zone") return ZONE_COLORS[U.zone[i]] || NO_DATA;
+  if (state.fill === "gdp") return logColor(GDP_RAMP, GDP_DOMAIN, e.gdp);
+  if (state.hideLow && e.conf === "low") return NO_DATA;
+  return state.fill === "rate" ? logColor(RATE_RAMP, RATE_DOMAIN, e.est) : ratioColor(e.vsCountry);
+}
+function opacityFor(i) {
+  if ((state.zone && U.zone[i] !== state.zone) || (state.country && U.iso3[i] !== state.country)) return 0.12;
+  if (state.fill === "gdp") return U.gdp_level[i] === "subnational" ? 0.9 : 0.4;
+  if (state.fill !== "zone" && EST[i].conf === "low") return 0.4;
+  return 0.88;
+}
+
+// ---------- map ----------
+const map = L.map("map", { worldCopyJump: true, minZoom: 1.5, zoomSnap: 0.25, preferCanvas: true });
+map.fitBounds([[-50, -150], [70, 160]]);
+const ESRI = "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas";
+L.tileLayer(`${ESRI}/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}`,
+  { attribution: "Basemap: Esri · Regions: GADM 4.1", maxZoom: 16 }).addTo(map);
+map.createPane("outlines"); map.getPane("outlines").style.zIndex = 420; map.getPane("outlines").style.pointerEvents = "none";
+map.createPane("labels"); map.getPane("labels").style.zIndex = 450; map.getPane("labels").style.pointerEvents = "none";
+map.createPane("gbif"); map.getPane("gbif").style.zIndex = 430; map.getPane("gbif").style.pointerEvents = "none";
+map.createPane("circles"); map.getPane("circles").style.zIndex = 440;
+L.tileLayer(`${ESRI}/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}`, { pane: "labels", maxZoom: 16, opacity: 0.9 }).addTo(map);
+const gbifTiles = L.tileLayer(
+  `https://api.gbif.org/v2/map/occurrence/density/{z}/{x}/{y}@1x.png?taxonKey=${DATA.taxon_key}&style=orangeHeat.point`,
+  { attribution: "BSF records: GBIF.org", pane: "gbif", tileSize: 512, zoomOffset: -1 });
+
+function tooltipHtml(i) {
+  const e = EST[i];
+  return `<b>${U.name[i]}</b>, ${countryName(U.iso3[i])}<br>${zoneName(U.zone[i])} · GDP ${fmtUsd(e.gdp)}${U.gdp_level[i] === "national" ? " (national)" : ""}` +
+         `<br>BSF rate: <b>${fmtRate(e.est)}</b> per 10k insect records` +
+         `<br><span style="color:#656d76">${fmt(e.B)} BSF of ${fmt(e.N)} insect records</span>`;
+}
+const layers = new Array(NU);
+const polyLayer = L.geoJSON({ type: "FeatureCollection", features: DATA.features }, {
+  style: f => baseStyle(f.properties.i),
+  onEachFeature: (f, layer) => {
+    const i = f.properties.i; layers[i] = layer;
+    layer.bindTooltip(() => tooltipHtml(i), { sticky: true });
+    layer.on("click", () => select(i));
+    layer.on("mouseover", () => layer.setStyle({ weight: 1.6, color: "#1f2328" }));
+    layer.on("mouseout", () => layer.setStyle(baseStyle(i)));
+  },
+}).addTo(map);
+L.geoJSON({ type: "FeatureCollection", features: DATA.outlines },
+  { pane: "outlines", interactive: false, style: { color: "#4b5563", weight: 0.8, opacity: 0.8, fill: false } }).addTo(map);
+function baseStyle(i) {
+  const sel = state.sel === i;
+  return { fillColor: fillFor(i), fillOpacity: opacityFor(i), color: sel ? "#1f2328" : "#ffffff", weight: sel ? 2.2 : 0.35, opacity: 1 };
+}
+
+const circleLayer = L.layerGroup().addTo(map);
+function radius(v) { return v == null ? 0 : 1.5 + 2 * Math.log2(1 + v); }
+function drawCircles() {
+  circleLayer.clearLayers();
+  if (!state.circles) return;
+  for (let i = 0; i < NU; i++) {
+    const e = EST[i], at = U.c[i];
+    if (!at || e.est == null || e.B === 0 || opacityFor(i) < 0.2 || (state.hideLow && e.conf === "low")) continue;
+    const low = e.conf === "low";
+    L.circleMarker(at, { pane: "circles", radius: radius(e.est), fillColor: "#1f2328", fillOpacity: { high: 0.8, medium: 0.45, low: 0 }[e.conf],
+                         color: low ? "#1f2328" : "#fff", opacity: low ? 0.5 : 1, weight: low ? 0.8 : 0.6, dashArray: low ? "2 2" : null })
+      .bindTooltip(() => tooltipHtml(i)).on("click", () => select(i)).addTo(circleLayer);
+  }
+}
+
+// ---------- legend ----------
+const legend = L.control({ position: "bottomleft" });
+legend.onAdd = () => { const d = L.DomUtil.create("div", "legend"); L.DomEvent.disableClickPropagation(d); return d; };
+legend.addTo(map);
+const rampHtml = (ramp, ticks) => `<div class="ramp">${ramp.map(c => `<div style="background:${c}"></div>`).join("")}</div><div class="ticks">${ticks.map(t => `<span>${t}</span>`).join("")}</div>`;
+function drawLegend() {
+  const el = legend.getContainer();
+  let h = "";
+  if (state.fill === "zone") {
+    h += `<div class="t">Climate zone (regional means, 1970-2000)</div><div class="biv"><div></div>`;
+    T.temp.forEach((t, i) => h += `<div class="ax"><b style="font-weight:600;color:var(--fg)">${cap(t)}</b><br>${tempRange(i)}</div>`);
+    [...T.precip].reverse().forEach((p, ri) => {
+      const pi = T.precip.length - 1 - ri;
+      h += `<div class="ay"><b style="font-weight:600;color:var(--fg)">${cap(p)}</b><br>${precRange(pi)}</div>`;
+      T.temp.forEach(t => {
+        const z = `${t}-${p}`;
+        h += `<div class="cell${state.zone && state.zone !== z ? " dim" : ""}" data-z="${z}" title="${zoneName(z)}" style="background:${ZONE_COLORS[z]}"></div>`;
+      });
+    });
+    h += `</div><div class="note" style="margin-top:4px">Temperature across, precipitation up. Click a cell to filter.</div>`;
+  } else if (state.fill === "rate") {
+    h += `<div class="t">BSF records per 10k insect records (log scale)</div>` + rampHtml(RATE_RAMP, [`≤${RATE_DOMAIN[0]}`, "3", `≥${RATE_DOMAIN[1]}`]);
+    h += `<div class="note" style="margin-top:4px">Faded: low confidence (95% interval wider than 3×).</div>`;
+  } else if (state.fill === "vsCountry") {
+    h += `<div class="t">Region rate ÷ its country's pooled rate</div>` + rampHtml(RATIO_RAMP, ["≤¼×", "½×", "1×", "2×", "≥4×"]);
+    h += `<div class="note" style="margin-top:4px">Removes national differences in observer culture.<br>Faded: low confidence.</div>`;
+  } else {
+    h += `<div class="t">GDP per capita, PPP (window mean, log scale)</div>` + rampHtml(GDP_RAMP, ["≤$1k", "$9k", "≥$80k"]);
+    h += `<div class="note" style="margin-top:4px">Faded: only a national figure exists for that country.<br>Source: Kummu et al., downscaled GDP per capita.</div>`;
+  }
+  if (state.circles) {
+    h += `<div class="t" style="margin-top:10px">Circle: shrunk BSF rate per 10k</div><svg width="220" height="32">`;
+    let x = 6;
+    [1, 5, 20].forEach(v => { const r = radius(v); x += r; h += `<circle cx="${x}" cy="${28 - r}" r="${r}" fill="#1f2328" fill-opacity=".8" stroke="#fff"/><text x="${x + r + 3}" y="27">${v}</text>`; x += r + 26; });
+    h += `</svg>`;
+  }
+  el.innerHTML = h;
+  el.querySelectorAll(".cell[data-z]").forEach(n => n.onclick = () => setZone(n.dataset.z));
+}
+
+// ---------- header + detail ----------
+function drawKpis(t) {
+  const items = [
+    [fmt(t.withBsf), `regions with BSF records (${t.countries} countries)`], [fmt(t.totB), "BSF records"], [fmt(t.totN / 1e6, 1) + "M", "insect records"],
+    [fmtRate(t.totB / t.totN * 1e4), "global BSF per 10k"], [fmt(t.totI / t.totB * 100) + "%", "BSF from iNaturalist"],
+  ];
+  document.getElementById("kpis").innerHTML = items.map(([v, l]) => `<div class="kpi"><div class="v">${v}</div><div class="l">${l}</div></div>`).join("") +
+    `<div class="kpi"><div class="v" style="color:var(--muted)">${state.y0}-${state.y1}</div><div class="l">window</div></div>`;
+}
+
+function sparkline(i) {
+  const i0 = DATA.years.indexOf(state.y0), i1 = DATA.years.indexOf(state.y1);
+  const ys = DATA.years.slice(i0, i1 + 1), b = U.bsf[i].slice(i0, i1 + 1).map(v => v || 0), n = U.ins[i].slice(i0, i1 + 1).map(v => v || 0);
+  const rate = b.map((x, j) => n[j] > 0 ? x / n[j] * 1e4 : null);
+  const W = 400, H = 110, L0 = 30, R0 = 34, T0 = 8, B0 = 18, w = W - L0 - R0, h = H - T0 - B0;
+  const bmax = Math.max(1, ...b), rmax = Math.max(1e-9, ...rate.filter(v => v != null));
+  const bw = w / ys.length;
+  let s = `<svg width="${W}" height="${H}">`;
+  b.forEach((v, j) => { const bh = v / bmax * h; s += `<rect x="${L0 + j * bw + 1}" y="${T0 + h - bh}" width="${Math.max(1, bw - 2)}" height="${bh}" fill="#d0d3d8"><title>${ys[j]}: ${v} BSF records</title></rect>`; });
+  const pts = rate.map((v, j) => v == null ? null : [L0 + (j + 0.5) * bw, T0 + h - v / rmax * h]);
+  let path = "", pen = false;
+  pts.forEach(p => { if (!p) { pen = false; return; } path += (pen ? "L" : "M") + p[0].toFixed(1) + "," + p[1].toFixed(1); pen = true; });
+  s += `<path d="${path}" fill="none" stroke="#5b3a9e" stroke-width="1.8"/>`;
+  pts.forEach((p, j) => { if (p) s += `<circle cx="${p[0]}" cy="${p[1]}" r="2" fill="#5b3a9e"><title>${ys[j]}: ${fmtRate(rate[j])} per 10k</title></circle>`; });
+  s += `<line x1="${L0}" x2="${L0 + w}" y1="${T0 + h}" y2="${T0 + h}" stroke="#c9ccd1"/>`;
+  s += `<text x="${L0}" y="${H - 4}">${ys[0]}</text><text x="${L0 + w}" y="${H - 4}" text-anchor="end">${ys[ys.length - 1]}</text>`;
+  s += `<text x="${L0 - 4}" y="${T0 + 8}" text-anchor="end">${bmax}</text><text x="${L0 - 4}" y="${T0 + h}" text-anchor="end">0</text>`;
+  s += `<text x="${L0 + w + 4}" y="${T0 + 8}" style="fill:#5b3a9e">${fmtRate(rmax)}</text><text x="${L0 + w / 2}" y="${H - 4}" text-anchor="middle">Year</text></svg>`;
+  return s + `<div class="note">Bars: BSF records per year (left axis). Line: BSF per 10k insect records, unpooled (right axis).</div>`;
+}
+
+function defaultRegion() {
+  let best = 0;
+  for (let i = 0; i < NU; i++) if ((!state.country || U.iso3[i] === state.country) && EST[i].B > EST[best].B) best = i;
+  return best;
+}
+function drawDetail() {
+  const i = state.sel ?? defaultRegion(), e = EST[i], iso = U.iso3[i], cp = CPOOL[iso];
+  const groupLabel = state.prior === "country" ? countryName(iso) : state.prior === "zone" ? zoneName(e.group) : "none";
+  document.getElementById("detail").innerHTML = `<h2>${state.sel != null ? "Selected region" : "Most-recorded region (click the map to change)"}</h2>
+    <h3>${U.name[i]}</h3><div class="meta">${U.unit_type[i] || "Region"} of ${countryName(iso)}${DATA.countries[iso]?.income ? " · " + DATA.countries[iso].income : ""}</div>
+    <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap"><span class="big">${fmtRate(e.est)}</span>
+      <span class="note">BSF per 10k insect records, 95% interval ${fmtRate(e.lo)}–${fmtRate(e.hi)}</span>
+      ${e.conf ? `<span class="pill ${e.conf}">${e.conf} confidence</span>` : ""}</div>
+    <div class="grid2">
+      <div><div class="l">Climate zone</div><div class="v"><span class="sw" style="background:${ZONE_COLORS[U.zone[i]] || NO_DATA}"></span>${zoneName(U.zone[i])}</div></div>
+      <div><div class="l">Normals 1970-2000</div><div class="v">${U.tas[i] == null ? "–" : `${fmt(U.tas[i], 1)}°C · ${fmt(U.pr[i])} mm/yr`}</div></div>
+      <div><div class="l">GDP per capita (PPP)</div><div class="v">${fmtUsd(e.gdp)} <span class="note">${U.gdp_level[i] === "national" ? "national figure" : "regional"}</span></div></div>
+      <div><div class="l">Area</div><div class="v">${fmt(U.area_km2[i])} km²</div></div>
+      <div><div class="l">BSF records</div><div class="v">${fmt(e.B)} <span class="note">(${e.B ? fmt(e.I / e.B * 100) : "–"}% iNaturalist)</span></div></div>
+      <div><div class="l">Insect records</div><div class="v">${fmt(e.N)}</div></div>
+      <div><div class="l">Unpooled rate</div><div class="v">${fmtRate(e.obs)}</div></div>
+      <div><div class="l">Pooled toward (${groupLabel})</div><div class="v">${fmtRate(e.prior)}</div></div>
+      <div><div class="l">${countryName(iso)} pooled rate</div><div class="v">${fmtRate(cp?.rate * 1e4)}</div></div>
+      <div><div class="l">vs own country</div><div class="v">${e.vsCountry == null ? "–" : fmt(e.vsCountry, 2) + "×"}</div></div>
+    </div>${sparkline(i)}`;
+}
+
+// ---------- development ----------
+const modelRow = (level, controls, measure, est) =>
+  DATA.models.find(m => m.level === level && m.controls === controls && m.measure === measure && (!est || m.estimator === est));
+const rrText = m => m ? `${fmt(m.rate_ratio, 2)}× <span class="note">(95% CI ${fmt(m.rr_lo95, 2)}–${fmt(m.rr_hi95, 2)})</span>` : "–";
+function drawFindings() {
+  const within = modelRow("admin-1 within country", "climate zone + country", "GDP per capita");
+  const withinX = modelRow("admin-1 within country", "climate zone + country, excl. USA", "GDP per capita");
+  const natLin = modelRow("national", "temperature band", "GDP per capita", "NegBin");
+  const hump = modelRow("national", "temperature band", "GDP per capita, squared term", "NegBin");
+  const hdi = modelRow("national", "temperature band", "HDI (per 0.1)");
+  document.getElementById("findings").innerHTML = `
+    <div class="finding">Within a country, a region <b>10× richer</b> records BSF at ${rrText(within)} the rate per insect record
+      <span class="note">(${within.n_units} regions with regional GDP in ${within.n_countries} countries; ${fmt(withinX.rate_ratio, 2)}× excluding the US)</span>.</div>
+    <div class="finding">Between countries there is no straight-line link: ${rrText(natLin)} per 10× GDP, and ${rrText(hdi)} per 0.1 HDI.
+      The rate instead peaks in middle-income countries, at around <b>${fmtUsd(hump.turning_point_gdp)}</b> GDP per capita
+      <span class="note">(negative-binomial quadratic, p = ${fmt(hump.p, 3)})</span>.</div>
+    <div class="note">Models: BSF count with insect records as exposure, 2010-2024, controlling for climate. Within-country fits add country fixed effects and cluster errors by country.</div>`;
+}
+
+function ppmlSlope(idx) {  // Poisson GLM with log(insects) offset on log10 GDP, robust (HC0) SE
+  const pts = idx.map(i => ({ x: Math.log10(EST[i].gdp), y: EST[i].B, off: Math.log(EST[i].N) }));
+  if (pts.length < 4 || pts.reduce((s, p) => s + p.y, 0) === 0) return null;
+  const xs = pts.map(p => p.x), xr = Math.max(...xs) - Math.min(...xs);
+  if (xr < 0.05) return null;
+  let b0 = Math.log(pts.reduce((s, p) => s + p.y, 0) / pts.reduce((s, p) => s + Math.exp(p.off), 0)), b1 = 0;
+  for (let it = 0; it < 100; it++) {
+    let a = 0, b = 0, c = 0, u = 0, v = 0;
+    pts.forEach(p => { const mu = Math.exp(b0 + b1 * p.x + p.off), r = p.y - mu; a += mu; b += mu * p.x; c += mu * p.x * p.x; u += r; v += r * p.x; });
+    const det = a * c - b * b; if (!(det > 0)) return null;
+    const d0 = (c * u - b * v) / det, d1 = (a * v - b * u) / det;
+    b0 += d0; b1 += d1;
+    if (Math.abs(d0) + Math.abs(d1) < 1e-9) break;
+  }
+  let a = 0, b = 0, c = 0, m00 = 0, m01 = 0, m11 = 0;
+  pts.forEach(p => { const mu = Math.exp(b0 + b1 * p.x + p.off), r2 = (p.y - mu) ** 2; a += mu; b += mu * p.x; c += mu * p.x * p.x; m00 += r2; m01 += r2 * p.x; m11 += r2 * p.x * p.x; });
+  const det = a * c - b * b, i00 = c / det, i01 = -b / det, i11 = a / det;
+  const v11 = i01 * (m00 * i01 + m01 * i11) + i11 * (m01 * i01 + m11 * i11);
+  const se = Math.sqrt(v11);
+  return { b0, b1, rr: Math.exp(b1), lo: Math.exp(b1 - 1.96 * se), hi: Math.exp(b1 + 1.96 * se), n: pts.length };
+}
+
+function drawScatter() {
+  const idx = [];
+  for (let i = 0; i < NU; i++) {
+    const e = EST[i];
+    if (U.gdp_level[i] !== "subnational" || !(e.gdp > 0) || e.N < 500 || e.B === 0) continue;
+    if (state.zone && U.zone[i] !== state.zone) continue;
+    idx.push(i);
+  }
+  const W = 404, H = 250, L0 = 40, R0 = 10, T0 = 10, B0 = 34, w = W - L0 - R0, h = H - T0 - B0;
+  const X = [500, 150000], Y = [0.05, 500];
+  const sx = v => L0 + (Math.log10(v) - Math.log10(X[0])) / (Math.log10(X[1]) - Math.log10(X[0])) * w;
+  const sy = v => T0 + h - (Math.log10(Math.max(Y[0], Math.min(Y[1], v))) - Math.log10(Y[0])) / (Math.log10(Y[1]) - Math.log10(Y[0])) * h;
+  let s = `<svg width="${W}" height="${H}">`;
+  [1000, 3000, 10000, 30000, 100000].forEach(t => s += `<line x1="${sx(t)}" x2="${sx(t)}" y1="${T0}" y2="${T0 + h}" stroke="#f0f1f3"/><text x="${sx(t)}" y="${T0 + h + 12}" text-anchor="middle">${fmtUsd(t)}</text>`);
+  [0.1, 1, 10, 100].forEach(t => s += `<line x1="${L0}" x2="${L0 + w}" y1="${sy(t)}" y2="${sy(t)}" stroke="#f0f1f3"/><text x="${L0 - 4}" y="${sy(t) + 3}" text-anchor="end">${t}</text>`);
+  s += `<text x="${L0 + w / 2}" y="${H - 4}" text-anchor="middle">Regional GDP per capita, PPP (log scale)</text>`;
+  s += `<text transform="translate(10 ${T0 + h / 2}) rotate(-90)" text-anchor="middle">BSF per 10k insect records (log)</text>`;
+  const focus = state.country;
+  const order = focus ? [...idx.filter(i => U.iso3[i] !== focus), ...idx.filter(i => U.iso3[i] === focus)] : idx;
+  order.forEach(i => {
+    const e = EST[i], on = !focus || U.iso3[i] === focus, r = 1.5 + Math.sqrt(e.N) / 120;
+    const col = focus ? (on ? "#5b3a9e" : "#d0d3d8") : (ZONE_COLORS[U.zone[i]] || "#999");
+    s += `<circle cx="${sx(e.gdp).toFixed(1)}" cy="${sy(e.obs).toFixed(1)}" r="${Math.min(r, 9).toFixed(1)}" fill="${col}" fill-opacity="${on ? 0.75 : 0.5}" stroke="${state.sel === i ? "#1f2328" : focus && on ? "#fff" : "none"}" stroke-width="1" data-i="${i}" style="cursor:pointer"><title>${U.name[i]}, ${countryName(U.iso3[i])}: ${fmtRate(e.obs)} per 10k, GDP ${fmtUsd(e.gdp)}</title></circle>`;
+  });
+  let caption = `Each point is a region with regional GDP and at least one BSF record (n = ${idx.length}), sized by insect records and coloured by climate zone. Pick a country to fit its own gradient.`;
+  if (focus) {
+    const own = [];
+    for (let i = 0; i < NU; i++) if (U.iso3[i] === focus && U.gdp_level[i] === "subnational" && EST[i].gdp > 0 && EST[i].N >= 500) own.push(i);
+    const fit = ppmlSlope(own);
+    if (fit) {
+      const xa = Math.min(...own.map(i => EST[i].gdp)), xb = Math.max(...own.map(i => EST[i].gdp));
+      const tot = own.reduce((acc, i) => [acc[0] + EST[i].B, acc[1] + EST[i].N], [0, 0]);
+      const mx = own.reduce((acc, i) => acc + Math.log10(EST[i].gdp) * EST[i].N, 0) / tot[1];
+      const yAt = g => tot[0] / tot[1] * Math.exp(fit.b1 * (Math.log10(g) - mx)) * 1e4;
+      s += `<line x1="${sx(xa)}" y1="${sy(yAt(xa))}" x2="${sx(xb)}" y2="${sy(yAt(xb))}" stroke="#1f2328" stroke-width="1.6" stroke-dasharray="4 3"/>`;
+      caption = `<b>${countryName(focus)}</b>: ${fit.n} regions (${own.filter(i => EST[i].B > 0).length} with BSF records). A 10× richer region records <b>${fmt(fit.rr, 2)}×</b> the BSF rate (95% CI ${fmt(fit.lo, 2)}–${fmt(fit.hi, 2)}; Poisson fit with insect records as exposure, dashed line).` +
+                (own.filter(i => EST[i].B > 0).length < 10 ? ` <b>Fewer than 10 regions have BSF records, so treat this as indicative; the robust interval is unreliable at this size.</b>` : "") +
+                ` The fit includes zero-BSF regions with at least 500 insect records; only regions with records are plotted.`;
+    } else caption = `<b>${countryName(focus)}</b> has too few regions with regional GDP and BSF records to fit a gradient.`;
+  }
+  s += `</svg>`;
+  const el = document.getElementById("scatter");
+  el.innerHTML = `<h4>Regional BSF rate vs GDP per capita, ${state.y0}-${state.y1}</h4>` + s + `<div class="note">${caption}</div>`;
+  el.querySelectorAll("circle[data-i]").forEach(c => c.onclick = () => select(+c.dataset.i, true));
+}
+
+function barChart(rows, { label, value, lo, hi, ref, fmtV, axis, title, note }) {
+  const W = 404, rowH = 22, L0 = 112, R0 = 64, H = rows.length * rowH + 22, w = W - L0 - R0;
+  const max = Math.max(...rows.map(hi), ref || 0) * 1.05;
+  const sx = v => L0 + v / max * w;
+  let s = `<svg width="${W}" height="${H}">`;
+  rows.forEach((r, j) => {
+    const y = j * rowH + 4;
+    s += `<text x="${L0 - 6}" y="${y + 12}" text-anchor="end" style="fill:var(--fg)">${label(r)}</text>`;
+    s += `<rect x="${L0}" y="${y + 3}" width="${Math.max(1, sx(value(r)) - L0)}" height="12" fill="#bcbddc"/>`;
+    s += `<line x1="${sx(lo(r))}" x2="${sx(hi(r))}" y1="${y + 9}" y2="${y + 9}" stroke="#4a1486" stroke-width="1.2"/>`;
+    s += `<text x="${W - R0 + 6}" y="${y + 12}" style="fill:var(--fg)">${fmtV(value(r))}</text>`;
+  });
+  if (ref != null) s += `<line x1="${sx(ref)}" x2="${sx(ref)}" y1="2" y2="${rows.length * rowH + 4}" stroke="#1f2328" stroke-dasharray="3 3"/>`;
+  s += `<text x="${L0 + w / 2}" y="${H - 4}" text-anchor="middle">${axis}</text></svg>`;
+  return `<h4>${title}</h4>${s}<div class="note">${note}</div>`;
+}
+function drawDevCharts() {
+  const within = DATA.dev_bins.filter(b => b.kind === "within_country_rel_gdp").sort((a, b) => a.bin - b.bin);
+  const income = ["Low income", "Lower middle income", "Upper middle income", "High income"]
+    .map(l => DATA.dev_bins.find(b => b.kind === "national_income_group" && b.label === l)).filter(Boolean);
+  document.getElementById("devCharts").innerHTML =
+    barChart(within, { label: r => r.label, value: r => r.value, lo: r => r.lo, hi: r => r.hi, ref: 1, fmtV: v => fmt(v, 2) + "×",
+      axis: "Observed ÷ expected BSF records", title: "Within countries: region's GDP relative to its country's regional mean",
+      note: "Expected = the country's pooled rate × the region's insect records, so national observer differences cancel. Bars show 95% Poisson intervals; dashed line = as expected." }) +
+    barChart(income, { label: r => r.label.replace(" income", ""), value: r => r.value, lo: r => r.lo, hi: r => r.hi, fmtV: v => fmtRate(v),
+      axis: "BSF per 10k insect records", title: "Between countries: World Bank income group",
+      note: income.map(r => `${r.label}: ${fmt(r.units)} countries, ${fmt(r.insecta / 1e6, 1)}M insect records, ${fmt(r.inat_share * 100)}% of BSF from iNaturalist`).join(" · ") + "." });
+}
+
+// ---------- tables ----------
+function drawZoneTable() {
+  const zones = Object.entries(ZPOOL).filter(([, v]) => v.N > 0).sort((a, b) => b[1].rate - a[1].rate);
+  const max = Math.max(...zones.map(([, v]) => v.rate));
+  let h = `<tr><th>Zone</th><th class="n">Regions</th><th class="n">BSF</th><th class="n">Insects</th><th class="n">Per 10k</th><th style="width:64px"></th></tr>`;
+  zones.forEach(([z, v]) => {
+    h += `<tr class="click${state.zone === z ? " sel" : ""}" data-z="${z}"><td><span class="sw" style="background:${ZONE_COLORS[z]}"></span>${zoneName(z)}</td>` +
+         `<td class="n">${fmt(v.n)}</td><td class="n">${fmt(v.B)}</td><td class="n">${fmt(v.N / 1e6, 1)}M</td><td class="n"><b>${fmtRate(v.rate * 1e4)}</b></td>` +
+         `<td><div class="bar" style="width:${v.rate / max * 100}%"></div></td></tr>`;
+  });
+  const t = document.getElementById("zoneTable");
+  t.innerHTML = h;
+  t.querySelectorAll("tr[data-z]").forEach(r => r.onclick = () => setZone(r.dataset.z));
+  document.getElementById("clearZone").style.display = state.zone ? "inline" : "none";
+}
+function drawPriorTable() {
+  const rows = DATA.prior_comparison;
+  const max = Math.max(...rows.flatMap(r => [Math.abs(r.gain_lo95), Math.abs(r.gain_hi95)]));
+  const x = v => 50 + v / max * 48, sign = v => (v > 0 ? "+" : "") + fmt(v, 1);
+  let h = `<tr><th>Grouping</th><th class="n">Groups</th><th class="n">Gain</th><th class="n">95% interval</th><th style="width:80px"></th></tr>`;
+  rows.forEach(r => {
+    const base = r.scheme === "region", clear = r.gain_lo95 > 0 || r.gain_hi95 < 0;
+    const col = base || !clear ? "#8c959f" : r.gain_vs_region > 0 ? "#5b3a9e" : "#b4232c";
+    h += `<tr><td>${SCHEME_LABEL[r.scheme] || r.scheme}</td><td class="n">${r.groups}</td><td class="n"><b>${base ? "–" : sign(r.gain_vs_region)}</b></td>` +
+         `<td class="n note">${base ? "baseline" : `${sign(r.gain_lo95)} to ${sign(r.gain_hi95)}`}</td><td><div style="position:relative;height:12px">` +
+         `<div style="position:absolute;left:50%;top:0;bottom:0;border-left:1px dashed #c9ccd1"></div>` +
+         (base ? "" : `<div style="position:absolute;top:5px;height:2px;left:${x(r.gain_lo95)}%;width:${x(r.gain_hi95) - x(r.gain_lo95)}%;background:${col}"></div>` +
+                      `<div style="position:absolute;top:2px;width:8px;height:8px;border-radius:50%;margin-left:-4px;left:${x(r.gain_vs_region)}%;background:${col}"></div>`) +
+         `</div></td></tr>`;
+  });
+  document.getElementById("priorTable").innerHTML = h;
+}
+
+// ---------- wiring ----------
+function render() {
+  const t = compute();
+  drawKpis(t);
+  polyLayer.setStyle(f => baseStyle(f.properties.i));
+  drawCircles(); drawLegend(); drawDetail(); drawScatter(); drawZoneTable();
+  if (state.tiles) gbifTiles.addTo(map); else gbifTiles.remove();
+}
+function select(i, pan) {
+  state.sel = state.sel === i ? null : i;
+  if (pan && state.sel != null && layers[i]) map.fitBounds(layers[i].getBounds(), { maxZoom: 6 });
+  render();
+}
+function setZone(z) { state.zone = state.zone === z ? null : z; render(); }
+function setCountry(iso) {
+  state.country = iso || null; state.sel = null;
+  if (state.country) {
+    const b = L.latLngBounds([]);
+    for (let i = 0; i < NU; i++) if (U.iso3[i] === iso && layers[i]) b.extend(layers[i].getBounds());
+    if (b.isValid()) map.fitBounds(b, { padding: [20, 20] });
+  }
+  render();
+}
+
+const cSel = document.getElementById("country");
+const byCountry = {};
+for (let i = 0; i < NU; i++) { const c = U.iso3[i]; byCountry[c] = (byCountry[c] || 0) + U.bsf[i].reduce((s, v) => s + (v || 0), 0); }
+cSel.add(new Option("All countries", ""));
+Object.keys(byCountry).sort((a, b) => countryName(a).localeCompare(countryName(b)))
+  .forEach(c => cSel.add(new Option(`${countryName(c)} (${fmt(byCountry[c])} BSF)`, c)));
+cSel.onchange = () => setCountry(cSel.value);
+
+const y0 = document.getElementById("y0"), y1 = document.getElementById("y1");
+DATA.years.forEach(y => { y0.add(new Option(y, y)); y1.add(new Option(y, y)); });
+y0.value = state.y0; y1.value = state.y1;
+y0.onchange = () => { state.y0 = +y0.value; if (state.y0 > state.y1) { state.y1 = state.y0; y1.value = state.y1; } render(); };
+y1.onchange = () => { state.y1 = +y1.value; if (state.y1 < state.y0) { state.y0 = state.y1; y0.value = state.y0; } render(); };
+document.getElementById("prior").onchange = e => { state.prior = e.target.value; render(); };
+document.getElementById("k").onchange = e => { state.k = +e.target.value; render(); };
+["circles", "tiles", "hideLow"].forEach(id => document.getElementById(id).onchange = e => { state[id] = e.target.checked; render(); });
+document.querySelectorAll("#fillSeg button").forEach(b => b.onclick = () => {
+  document.querySelectorAll("#fillSeg button").forEach(x => x.classList.toggle("on", x === b));
+  state.fill = b.dataset.v; render();
+});
+document.getElementById("clearZone").onclick = () => setZone(null);
+const nNational = new Set(U.iso3.filter((c, i) => U.gdp_level[i] === "national")).size;
+document.getElementById("gdpNote").textContent = `GDP per capita is regional where Kummu et al. publish sub-national figures. ${nNational} countries, including Costa Rica and Ghana, only have a national figure; their regions are faded on the GDP map and left out of the regional scatter and within-country models. ${DATA.gdp_years[DATA.gdp_years.length - 1]} is the latest GDP year, so later windows reuse it.`;
+document.getElementById("sources").innerHTML = `Sources: GBIF occurrence and Maps APIs (taxonKey ${DATA.taxon_key}, records with clean coordinates, faceted by GADM level-1 region), GADM 4.1 boundaries, WorldClim 2.1 climate normals, Kummu et al. downscaled GDP per capita PPP (1990-2024), World Bank income groups, UNDP HDI. Built ${DATA.generated}.`;
+
+drawFindings(); drawDevCharts(); drawPriorTable();
+render();
+</script>
+</body>
+</html>

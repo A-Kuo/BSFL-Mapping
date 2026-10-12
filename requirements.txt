@@ -1,0 +1,7 @@
+pygbif>=0.7
+requests
+pandas
+scipy
+geopandas
+rasterio
+statsmodels

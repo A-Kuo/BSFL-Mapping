@@ -1,0 +1,6 @@
+scheme,k,gain_vs_region,gain_lo95,gain_hi95
+temp_band,1000.0,27.05,-6.34,61.85
+zone_merged,1000.0,19.51,-15.0,56.21
+region_x_temp,3000.0,0.08,-23.81,23.54
+region,3000.0,0.0,0.0,0.0
+global_,1000.0,-67.07,-101.96,-31.96
