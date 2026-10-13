@@ -1,0 +1,518 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>BSF gradient field (GPU)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css">
+<script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script>
+<style>
+  :root { --fg:#1f2328; --muted:#656d76; --line:#e3e5e8; --accent:#5b3a9e; --accent-soft:#ece6f6; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; font:13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; color:var(--fg); background:#e9edf2; }
+  #app { display:grid; grid-template-columns: 1fr 330px; height:100vh; }
+  #map { position:relative; }
+  #labels { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; z-index:1; }
+  .title { position:absolute; left:16px; top:12px; z-index:2; pointer-events:none; text-shadow:0 0 6px #e9edf2, 0 0 6px #e9edf2; }
+  .title h1 { font-size:17px; margin:0; font-weight:650; } .title div { color:var(--muted); font-size:12px; max-width:560px; }
+  #hud { position:absolute; left:16px; bottom:12px; z-index:2; font-size:11px; color:var(--muted); background:rgba(255,255,255,.85); padding:3px 8px; border-radius:4px; font-variant-numeric:tabular-nums; }
+  #tip { position:absolute; z-index:3; pointer-events:none; background:#fff; border:1px solid var(--line); border-radius:6px; box-shadow:0 4px 14px rgba(0,0,0,.14); padding:8px 10px; font-size:12px; min-width:210px; display:none; }
+  #tip .row { display:flex; justify-content:space-between; gap:14px; } #tip .k { color:var(--muted); }
+  #err { position:absolute; inset:auto 16px 50px 16px; z-index:4; background:#fff3f0; border:1px solid #f0b8aa; border-radius:6px; padding:8px 10px; display:none; }
+  aside { border-left:1px solid var(--line); overflow-y:auto; background:#fff; }
+  section { padding:13px 18px; border-bottom:1px solid var(--line); }
+  section h2 { font-size:11px; font-weight:650; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin:0 0 9px; }
+  .seg { display:inline-flex; border:1px solid #c9ccd1; border-radius:6px; overflow:hidden; }
+  .seg button { border:0; background:#fff; padding:5px 10px; font:inherit; cursor:pointer; border-right:1px solid #c9ccd1; }
+  .seg button:last-child { border-right:0; } .seg button.on { background:var(--accent-soft); color:var(--accent); font-weight:600; }
+  .ctl { display:flex; align-items:center; gap:10px; margin:7px 0; } .ctl label.l { width:58px; color:var(--muted); flex:none; }
+  .ctl input[type=range] { flex:1; accent-color:var(--accent); }
+  select { font:inherit; padding:3px 6px; border:1px solid #c9ccd1; border-radius:5px; background:#fff; }
+  .check { display:flex; gap:7px; align-items:center; margin:6px 0; cursor:pointer; }
+  .note { color:var(--muted); font-size:11.5px; line-height:1.4; }
+  .ramp { height:12px; border-radius:3px; background:linear-gradient(90deg,#f2f0f7,#dadaeb,#bcbddc,#9e9ac8,#807dba,#6a51a3,#4a1486); box-shadow:inset 0 0 0 1px rgba(0,0,0,.12); }
+  .ticks { display:flex; justify-content:space-between; font-size:11px; color:var(--muted); margin-top:2px; }
+  .wrow { display:flex; align-items:center; gap:8px; margin:4px 0; font-size:12px; } .wrow .nm { width:58px; color:var(--muted); } .wrow .bar { flex:1; height:8px; background:#eef0f3; border-radius:4px; overflow:hidden; } .wrow .bar i { display:block; height:100%; background:var(--accent); width:0; }
+  .wrow .pc { width:34px; text-align:right; font-variant-numeric:tabular-nums; color:var(--muted); }
+  pre { font-size:11px; background:#f7f8fa; border-radius:6px; padding:8px; white-space:pre-wrap; margin:8px 0 0; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="map">
+    <canvas id="labels"></canvas>
+    <div class="title"><h1>Black Soldier Fly record rate, continental US</h1><div>Gradient field built on the GPU from unit-ID rasters. Smooth fill between units is interpolation, not measurement.</div></div>
+    <div id="hud"></div>
+    <div id="tip"></div>
+    <div id="err"></div>
+  </div>
+  <aside>
+    <section>
+      <h2>Data preset</h2>
+      <div class="ctl" style="margin-top:0"><label class="l">Window</label><div class="seg" id="winSeg"></div></div>
+      <div class="ctl"><label class="l">Insects</label><div class="seg" id="denSeg"><button data-v="0" class="on">All records</button><button data-v="1">iNat only</button></div></div>
+      <div class="note" id="presetNote">Preset switch uploads new per-unit values; the GPU re-joins and re-blurs.</div>
+    </section>
+    <section>
+      <h2>View</h2>
+      <div class="seg" id="modeSeg"><button data-v="flat" class="on">Flat</button><button data-v="ext">Extruded</button></div>
+      <label class="check" style="margin-top:10px"><input type="checkbox" id="chkField" checked> Smooth gradient fill <span class="note">(off: flat colour per unit)</span></label>
+      <label class="check"><input type="checkbox" id="chkDots" checked> Bubbles <span class="note">(merge upward as you zoom out)</span></label>
+      <label class="check"><input type="checkbox" id="chkFade" checked> Wash out low-confidence counties and cells</label>
+      <div class="ctl"><label class="l">Height</label><input type="range" id="rHgt" min="0.4" max="2" step="0.05" value="1"></div>
+    </section>
+    <section>
+      <h2>Detail level</h2>
+      <div class="ctl" style="margin-top:0"><label class="l">Mode</label>
+        <select id="selDetail"><option value="auto">Auto (follows zoom)</option><option value="0">Lock: nation</option><option value="1">Lock: regions</option><option value="2">Lock: states</option><option value="3">Lock: counties</option><option value="4">Lock: cells</option></select></div>
+      <div id="wbars"></div>
+    </section>
+    <section>
+      <h2>Log scale</h2>
+      <div class="ctl" style="margin-top:0"><label class="l">Range</label><select id="selDomain"><option value="us">Fit to US units (2 to 2,000)</option><option value="dash">World dashboard (30 to 3,000)</option></select></div>
+      <div class="ramp"></div><div class="ticks" id="ticks"></div>
+      <div class="note">BSF records per million insect records. Colour, bubble size and prism height share this one log axis.</div>
+    </section>
+    <section>
+      <h2>Timing</h2>
+      <pre id="timing">building…</pre>
+    </section>
+  </aside>
+</div>
+<script>
+(async () => {
+const $ = id => document.getElementById(id);
+const fail = msg => { $("err").style.display = "block"; $("err").textContent = msg; throw new Error(msg); };
+const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
+const smooth = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+const fmtN = v => Math.round(v).toLocaleString("en-US"), fmtR = v => v >= 10 ? fmtN(v) : (+v).toFixed(1);
+
+// ---------------------------------------------------------------- data
+const get = async (f, t = "json") => (await fetch(`data/${f}`))[t]();
+const [meta, grid, anchors] = await Promise.all([get("meta.json"), get("grid.json"), get("anchors.json")]);
+const KEYS = ["nation", "regions", "states", "counties", "cells"];
+const geo = Object.fromEntries(await Promise.all(KEYS.map(async k => [k, await get(`${k}.geojson`)])));
+const [outside, backdrop] = await Promise.all([get("field_outside.geojson"), get("field_backdrop.geojson")]);
+const idImg = await createImageBitmap(await get("ids.png", "blob"), { premultiplyAlpha: "none", colorSpaceConversion: "none" });
+const cellImg = await createImageBitmap(await get("cells.png", "blob"), { premultiplyAlpha: "none", colorSpaceConversion: "none" });
+const P = (u, p) => u.properties;
+const nS = geo.states.features.length, nC = geo.counties.features.length, nK = geo.cells.features.length;
+const stateRegion = geo.states.features.map(f => f.properties.rg);
+const countyState = geo.counties.features.map(f => f.properties.st);
+
+const DOMAINS = { us: [2, 2000], dash: [30, 3000] };
+let LO = Math.log10(2), HI = Math.log10(2000);
+const RAMP = ["#f2f0f7", "#dadaeb", "#bcbddc", "#9e9ac8", "#807dba", "#6a51a3", "#4a1486"];
+const RAMP_RGB = RAMP.map(h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16) / 255));
+const WASH = RAMP.map(h => { const c = [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16)), w = [244, 245, 247]; return `rgb(${c.map((v, i) => Math.round(v + (w[i] - v) * 0.5)).join(",")})`; });
+let preset = 0, mode = "flat", fade = true, hScale = 1, showField = true, showDots = true, detail = "auto";
+
+// ---------------------------------------------------------------- map
+const map = new maplibregl.Map({
+  container: "map", attributionControl: false, maxPitch: 70, renderWorldCopies: false,
+  style: { version: 8, sources: {}, layers: [{ id: "bg", type: "background", paint: { "background-color": "#e9edf2" } }] },
+  bounds: [[-125, 24], [-66.5, 49.5]], fitBoundsOptions: { padding: { top: 70, bottom: 30, left: 30, right: 30 } },
+});
+window.__map = map;
+map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "top-right");
+if (!map.loaded()) await new Promise(r => map.once("load", r));
+const FIT = map.getZoom();
+// tier boundaries relative to the zoom that fits the whole country (same offsets as the Canvas prototype)
+const BOUND = [-1.2, -0.15, 1.2, 2.4].map(d => FIT + d), HALF = 0.3;
+const TIERS = KEYS.map((key, i) => ({ key, z0: i ? BOUND[i - 1] : 0, z1: i < 4 ? BOUND[i] : 24, hmax: [260000, 260000, 220000, 70000, 25000][i] }));
+function weightsAt(z) {
+  if (detail !== "auto") return KEYS.map((k, i) => i === +detail ? 1 : 0);
+  const lam = BOUND.reduce((a, b) => a + smooth(b - HALF, b + HALF, z), 0);
+  return KEYS.map((k, i) => Math.max(0, 1 - Math.abs(lam - i)));
+}
+
+// ---------------------------------------------------------------- WebGL field + bubbles (custom layer)
+const VS_QUAD = `#version 300 es
+in vec2 a; out vec2 uv; void main() { uv = a * 0.5 + 0.5; gl_Position = vec4(a, 0, 1); }`;
+const FS_JOIN = `#version 300 es
+precision highp float; precision highp int;
+uniform sampler2D u_ids, u_cells, u_cv, u_kv; uniform float u_s[${nS}]; uniform int u_sr[${nS}];
+layout(location = 0) out vec4 o0; layout(location = 1) out vec4 o1; layout(location = 2) out vec4 o2;
+float val(sampler2D t, int id) { return texelFetch(t, ivec2(id % 1024, id / 1024), 0).r; }
+int b8(float x) { return int(x * 255.0 + 0.5); }
+void main() {
+  ivec2 p = ivec2(gl_FragCoord.xy);
+  vec4 a = texelFetch(u_ids, p, 0), b = texelFetch(u_cells, p, 0);
+  int s = b8(a.r), c = b8(a.g) * 256 + b8(a.b), k = b8(b.r) * 256 + b8(b.g);
+  if (s == 0) { o0 = vec4(0); o1 = vec4(0); o2 = vec4(0); return; }
+  float vs = u_s[s - 1], vc = c > 0 ? val(u_cv, c - 1) : vs, vk = k > 0 ? val(u_kv, k - 1) : vc;
+  int r = u_sr[s - 1];
+  vec4 oh = vec4(r == 0, r == 1, r == 2, r == 3);
+  o0 = vec4(vs, vc, vk, 1.0); o1 = oh * vs; o2 = oh;
+}`;
+const FS_DOWN = `#version 300 es
+precision highp float; uniform sampler2D u_src; in vec2 uv; out vec4 o; void main() { o = texture(u_src, uv); }`;
+const FS_BLUR = `#version 300 es
+precision highp float; precision highp int;
+uniform sampler2D u_src; uniform ivec2 u_dir; uniform float u_sigma; out vec4 o;
+void main() {
+  ivec2 p = ivec2(gl_FragCoord.xy), sz = textureSize(u_src, 0); int R = int(ceil(3.0 * u_sigma));
+  vec4 acc = vec4(0); float ws = 0.0;
+  for (int i = -40; i <= 40; i++) {
+    if (i < -R || i > R) continue;
+    float w = exp(-0.5 * float(i * i) / (u_sigma * u_sigma)); ws += w;
+    ivec2 q = p + u_dir * i;
+    if (q.x < 0 || q.y < 0 || q.x >= sz.x || q.y >= sz.y) continue;      // zero outside the grid
+    acc += w * texelFetch(u_src, q, 0);
+  }
+  o = acc / ws;
+}`;
+const FS_FIELDS = `#version 300 es
+precision highp float; precision highp int;
+uniform sampler2D u_t0, u_ids, u_b9, u_b14, u_b40, u_b80, u_b480, u_g1, u_g2; uniform int u_sr[${nS}];
+layout(location = 0) out vec4 o0; layout(location = 1) out vec4 o1;
+float ratio(float n, float d) { return d > 2e-3 ? n / d : -9.0; }
+float pick(vec4 v, int r) { return r == 0 ? v.x : r == 1 ? v.y : r == 2 ? v.z : v.w; }
+void main() {
+  ivec2 p = ivec2(gl_FragCoord.xy); vec2 uv = (vec2(p) + 0.5) / vec2(textureSize(u_t0, 0));
+  vec4 t0 = texelFetch(u_t0, p, 0); bool inside = t0.a > 0.5;
+  vec4 b9 = texture(u_b9, uv), b14 = texture(u_b14, uv), b40 = texture(u_b40, uv), b80 = texture(u_b80, uv), b480 = texture(u_b480, uv);
+  float bS = ratio(b40.r, b40.a), bR = ratio(b80.r, b80.a), bN = ratio(b480.r, b480.a), bC = ratio(b14.g, b14.a), bK = ratio(b9.b, b9.a);
+  float bg = bR;
+  if (inside) { int r = u_sr[int(texelFetch(u_ids, p, 0).r * 255.0 + 0.5) - 1]; bg = ratio(pick(texture(u_g1, uv), r), pick(texture(u_g2, uv), r)); }
+  // own value + blur of it, as in the Canvas prototype: states 0.4/0.6, regions 0.8 masked-region blur + 0.2, counties and cells 0.5/0.5
+  o0 = vec4(bN, inside ? 0.8 * bg + 0.2 * bR : bR, inside ? 0.4 * t0.r + 0.6 * bS : bS, inside ? 0.5 * t0.g + 0.5 * bC : bC);
+  o1 = vec4(inside ? 0.5 * t0.b + 0.5 * bK : bK, 0, 0, 1);
+}`;
+const VS_MAP = `#version 300 es
+uniform mat4 u_m; uniform vec4 u_box; in vec2 a; out vec2 uv;
+void main() { uv = a * 0.5 + 0.5; gl_Position = u_m * vec4(mix(u_box.x, u_box.z, uv.x), mix(u_box.y, u_box.w, uv.y), 0, 1); }`;
+const FS_COMPOSE = `#version 300 es
+precision highp float;
+uniform sampler2D u_fa, u_fb; uniform float u_w[5]; uniform float u_lo, u_hi; uniform vec3 u_ramp[7]; in vec2 uv; out vec4 o;
+void main() {
+  vec4 a = texture(u_fa, uv); float k = texture(u_fb, uv).r;
+  float v = u_w[0] * a.r + u_w[1] * a.g + u_w[2] * a.b + u_w[3] * a.a + u_w[4] * k;
+  float t = clamp((v - u_lo) / (u_hi - u_lo), 0.0, 1.0) * 6.0; int i = min(int(t), 5);
+  o = vec4(mix(u_ramp[i], u_ramp[i + 1], t - float(i)), 1.0);
+}`;
+const VS_DOTS = `#version 300 es
+uniform mat4 u_m; uniform float u_w[5]; uniform vec2 u_vp; uniform float u_lo, u_hi, u_zb;
+in vec2 a_corner; in vec2 a_pc, a_ps, a_pr, a_pn; in vec4 a_v; in vec4 a_rep; in float a_low;
+out vec2 q; out float rad, alpha, low;
+void main() {
+  float wc = u_w[3] + u_w[4];
+  vec2 p = u_w[0] * a_pn + u_w[1] * a_pr + u_w[2] * a_ps + wc * a_pc;          // a county bubble walks to its state, region, nation anchor
+  float v = u_w[0] * a_v.w + u_w[1] * a_v.z + u_w[2] * a_v.y + wc * a_v.x;
+  float t = clamp((v - u_lo) / (u_hi - u_lo), 0.0, 1.0);
+  rad = 2.0 * pow(16.0, t) * (u_w[0] * 1.6 + u_w[1] * 1.25 + u_w[2] + wc * 0.42) * u_zb;
+  alpha = wc + u_w[2] * a_rep.y + u_w[1] * a_rep.z + u_w[0] * a_rep.w;         // merged bubbles: one representative stays opaque
+  low = a_low * wc;
+  float R = rad + 1.5; vec4 c = u_m * vec4(p, 0, 1);
+  c.xy += a_corner * R * 2.0 / u_vp * c.w; q = a_corner * R; gl_Position = c;
+}`;
+const FS_DOTS = `#version 300 es
+precision highp float; in vec2 q; in float rad, alpha, low; out vec4 o;
+void main() {
+  float d = length(q); if (d > rad + 1.0 || alpha < 0.01) discard;
+  float sw = mix(1.2, 1.5, low);
+  vec4 fill = mix(vec4(0.12, 0.137, 0.157, 0.78), vec4(1.0, 1.0, 1.0, 0.4), low), stroke = mix(vec4(1.0), vec4(0.12, 0.137, 0.157, 1.0), low);
+  vec4 c = mix(stroke, fill, 1.0 - smoothstep(rad - sw - 0.5, rad - sw + 0.5, d));
+  c.a *= (1.0 - smoothstep(rad - 0.5, rad + 0.5, d)) * clamp(alpha, 0.0, 1.0);
+  o = vec4(c.rgb * c.a, c.a);
+}`;
+
+const timing = {};
+const field = {
+  id: "bsf-field", type: "custom", renderingMode: "2d",
+  onAdd(m, gl) {
+    if (!(gl instanceof WebGL2RenderingContext)) fail("WebGL2 is required for the gradient field.");
+    if (!gl.getExtension("EXT_color_buffer_float")) fail("This GPU cannot render to float textures (EXT_color_buffer_float).");
+    this.gl = gl; this.dirty = true;
+    const prog = (vs, fs) => {
+      const p = gl.createProgram();
+      for (const [type, src] of [[gl.VERTEX_SHADER, vs], [gl.FRAGMENT_SHADER, fs]]) {
+        const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+        if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) fail("shader: " + gl.getShaderInfoLog(s));
+        gl.attachShader(p, s);
+      }
+      gl.bindAttribLocation(p, 0, "a"); gl.linkProgram(p);
+      if (!gl.getProgramParameter(p, gl.LINK_STATUS)) fail("link: " + gl.getProgramInfoLog(p));
+      const u = new Proxy({}, { get: (c, n) => c[n] ?? (c[n] = gl.getUniformLocation(p, n)) });
+      return { p, u };
+    };
+    this.P = { join: prog(VS_QUAD, FS_JOIN), down: prog(VS_QUAD, FS_DOWN), blur: prog(VS_QUAD, FS_BLUR), fields: prog(VS_QUAD, FS_FIELDS),
+               compose: prog(VS_MAP, FS_COMPOSE), dots: prog(VS_DOTS, FS_DOTS) };
+    this.quad = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, this.quad); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+    this.vaoQuad = gl.createVertexArray(); gl.bindVertexArray(this.vaoQuad); gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0); gl.bindVertexArray(null);
+    const W = grid.w, H = grid.h;
+    this.tex = (w, h, ifmt, fmt, type, filter, data = null) => {
+      const t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t);
+      gl.texImage2D(gl.TEXTURE_2D, 0, ifmt, w, h, 0, fmt, type, data);
+      for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, filter], [gl.TEXTURE_MAG_FILTER, filter], [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, k, v);
+      return { t, w, h };
+    };
+    const rt = (w, h) => this.tex(w, h, gl.RGBA16F, gl.RGBA, gl.HALF_FLOAT, gl.LINEAR);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false); gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false); gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
+    this.ids = this.tex(W, H, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, gl.NEAREST); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, idImg);
+    this.cells = this.tex(W, H, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, gl.NEAREST); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, cellImg);
+    this.cv = this.tex(1024, Math.ceil(nC / 1024), gl.R32F, gl.RED, gl.FLOAT, gl.NEAREST);
+    this.kv = this.tex(1024, Math.ceil(nK / 1024), gl.R32F, gl.RED, gl.FLOAT, gl.NEAREST);
+    this.t0 = rt(W, H); this.t1 = rt(W, H); this.t2 = rt(W, H); this.fa = rt(W, H); this.fb = rt(W, H);
+    // half-resolution pyramids for the wide blurs
+    const pyr = levels => { const out = []; let w = W, h = H; for (let i = 0; i < levels; i++) { w = Math.ceil(w / 2); h = Math.ceil(h / 2); out.push([rt(w, h), rt(w, h)]); } return out; };
+    this.p0 = pyr(5); this.p1 = pyr(4); this.p2 = pyr(4);
+    this.blurOut = {}; this.fbo = gl.createFramebuffer();
+    // bubble instances: one per county
+    this.vaoDots = gl.createVertexArray(); this.inst = gl.createBuffer();
+    gl.bindVertexArray(this.vaoDots);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.quad); gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+    const dp = this.P.dots.p; gl.bindBuffer(gl.ARRAY_BUFFER, this.inst);
+    const attrs = [["a_pc", 2], ["a_ps", 2], ["a_pr", 2], ["a_pn", 2], ["a_v", 4], ["a_rep", 4], ["a_low", 1]];
+    let off = 0; const stride = attrs.reduce((a, [, n]) => a + n, 0) * 4;
+    for (const [name, n] of attrs) { const loc = gl.getAttribLocation(dp, name); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, n, gl.FLOAT, false, stride, off); gl.vertexAttribDivisor(loc, 1); off += n * 4; }
+    gl.bindVertexArray(null);
+    this.instStride = stride / 4;
+  },
+  target(texs) {
+    const gl = this.gl; gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbo);
+    texs.forEach((t, i) => gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0 + i, gl.TEXTURE_2D, t.t, 0));
+    for (let i = texs.length; i < 3; i++) gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0 + i, gl.TEXTURE_2D, null, 0);
+    gl.drawBuffers(texs.map((t, i) => gl.COLOR_ATTACHMENT0 + i)); gl.viewport(0, 0, texs[0].w, texs[0].h);
+  },
+  bind(prog, unit, name, tex) { const gl = this.gl; gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(gl.TEXTURE_2D, tex.t); gl.uniform1i(prog.u[name], unit); },
+  draw() { this.gl.drawArrays(this.gl.TRIANGLE_STRIP, 0, 4); },
+  // normalised blur source at a given sigma: pick the pyramid level that keeps the kernel at 3-6 px, then two separable passes
+  blur(src, pyr, sigmaKm) {
+    const gl = this.gl, sigmaPx = sigmaKm / grid.pxKm, k = Math.max(0, Math.floor(Math.log2(sigmaPx / 3)));
+    const level = k === 0 ? null : pyr[k - 1], s = sigmaPx / 2 ** k;
+    const input = k === 0 ? src : level[0];
+    const tmp = k === 0 ? this.tex(src.w, src.h, gl.RGBA16F, gl.RGBA, gl.HALF_FLOAT, gl.LINEAR) : level[1];
+    const out = this.tex(input.w, input.h, gl.RGBA16F, gl.RGBA, gl.HALF_FLOAT, gl.LINEAR);
+    const B = this.P.blur; gl.useProgram(B.p); gl.uniform1f(B.u.u_sigma, s);
+    this.target([tmp]); this.bind(B, 0, "u_src", input); gl.uniform2i(B.u.u_dir, 1, 0); this.draw();
+    this.target([out]); this.bind(B, 0, "u_src", tmp); gl.uniform2i(B.u.u_dir, 0, 1); this.draw();
+    if (k === 0) gl.deleteTexture(tmp.t);
+    return out;
+  },
+  pyramid(src, pyr) {
+    const gl = this.gl, D = this.P.down; gl.useProgram(D.p); let prev = src;
+    for (const [lvl] of pyr) { this.target([lvl]); this.bind(D, 0, "u_src", prev); this.draw(); prev = lvl; }
+  },
+  build() {
+    const gl = this.gl, t0 = performance.now();
+    const ev = f => f.properties[`e${preset}`];
+    // per-unit values for this preset: states as a uniform array, counties and cells as data textures
+    const pad = (arr, n) => { const out = new Float32Array(1024 * Math.ceil(n / 1024)); out.set(arr); return out; };
+    gl.bindTexture(gl.TEXTURE_2D, this.cv.t); gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 1024, this.cv.h, gl.RED, gl.FLOAT, pad(geo.counties.features.map(ev), nC));
+    gl.bindTexture(gl.TEXTURE_2D, this.kv.t); gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 1024, this.kv.h, gl.RED, gl.FLOAT, pad(geo.cells.features.map(ev), nK));
+    gl.bindVertexArray(this.vaoQuad); gl.disable(gl.BLEND); gl.disable(gl.DEPTH_TEST); gl.disable(gl.STENCIL_TEST); gl.disable(gl.CULL_FACE); gl.colorMask(true, true, true, true);
+    const J = this.P.join; gl.useProgram(J.p);
+    gl.uniform1fv(J.u.u_s, new Float32Array(geo.states.features.map(ev))); gl.uniform1iv(J.u.u_sr, new Int32Array(stateRegion));
+    this.target([this.t0, this.t1, this.t2]);
+    this.bind(J, 0, "u_ids", this.ids); this.bind(J, 1, "u_cells", this.cells); this.bind(J, 2, "u_cv", this.cv); this.bind(J, 3, "u_kv", this.kv); this.draw();
+    this.pyramid(this.t0, this.p0); this.pyramid(this.t1, this.p1); this.pyramid(this.t2, this.p2);
+    for (const t of Object.values(this.blurOut)) gl.deleteTexture(t.t);
+    const b = this.blurOut = { b9: this.blur(this.t0, this.p0, 9), b14: this.blur(this.t0, this.p0, 14), b40: this.blur(this.t0, this.p0, 40),
+      b80: this.blur(this.t0, this.p0, 80), b480: this.blur(this.t0, this.p0, 480), g1: this.blur(this.t1, this.p1, 230), g2: this.blur(this.t2, this.p2, 230) };
+    const F = this.P.fields; gl.useProgram(F.p); gl.uniform1iv(F.u.u_sr, new Int32Array(stateRegion));
+    this.target([this.fa, this.fb]);
+    [["u_t0", this.t0], ["u_ids", this.ids], ["u_b9", b.b9], ["u_b14", b.b14], ["u_b40", b.b40], ["u_b80", b.b80], ["u_b480", b.b480], ["u_g1", b.g1], ["u_g2", b.g2]].forEach(([n, t], i) => this.bind(F, i, n, t));
+    this.draw();
+    gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.FLOAT, new Float32Array(4));     // wait for the GPU so the timing is honest
+    timing.build = performance.now() - t0;
+    this.buildDots();
+    this.dirty = false;
+  },
+  buildDots() {
+    const gl = this.gl, ev = f => f.properties[`e${preset}`], B = f => f.properties[`b${preset}`];
+    const mc = ll => { const m = maplibregl.MercatorCoordinate.fromLngLat(ll); return [m.x, m.y]; };
+    const A = this.A ??= { c: anchors.counties.map(mc), s: anchors.states.map(mc), r: anchors.regions.map(mc), n: mc(anchors.nation[0]) };
+    const C = geo.counties.features, S = geo.states.features, R = geo.regions.features, N = geo.nation.features[0];
+    // representatives: the county with most BSF records stands for its state, the best state's for its region, and so on
+    const stateRep = new Array(nS).fill(-1);
+    C.forEach((f, i) => { const s = countyState[i]; if (stateRep[s] < 0 || B(f) > B(C[stateRep[s]])) stateRep[s] = i; });
+    const regionRep = new Array(R.length).fill(-1);
+    S.forEach((f, s) => { const r = stateRegion[s]; if (regionRep[r] < 0 || B(f) > B(S[regionRep[r]])) regionRep[r] = s; });
+    let natRep = 0; R.forEach((f, r) => { if (B(f) > B(R[natRep])) natRep = r; });
+    const order = C.map((f, i) => i).sort((a, b) => ev(C[b]) - ev(C[a]));          // big bubbles first, small ones on top
+    const buf = new Float32Array(nC * this.instStride);
+    order.forEach((i, j) => {
+      const s = countyState[i], r = stateRegion[s], o = j * this.instStride, isS = stateRep[s] === i, isR = isS && regionRep[r] === s, isN = isR && natRep === r;
+      buf.set([...A.c[i], ...A.s[s], ...A.r[r], ...A.n, ev(C[i]), ev(S[s]), ev(R[r]), ev(N), 1, +isS, +isR, +isN, +(C[i].properties[`c${preset}`] === 2)], o);
+    });
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.inst); gl.bufferData(gl.ARRAY_BUFFER, buf, gl.DYNAMIC_DRAW);
+  },
+  prerender(gl) {
+    if (!this.dirty) return;
+    const fb = gl.getParameter(gl.FRAMEBUFFER_BINDING), vp = gl.getParameter(gl.VIEWPORT);
+    this.build();
+    gl.bindVertexArray(null); gl.bindFramebuffer(gl.FRAMEBUFFER, fb); gl.viewport(vp[0], vp[1], vp[2], vp[3]);
+  },
+  render(gl, opt) {
+    const t0 = performance.now(), w = weightsAt(map.getZoom()), m = opt.modelViewProjectionMatrix;
+    gl.disable(gl.DEPTH_TEST); gl.disable(gl.STENCIL_TEST); gl.disable(gl.CULL_FACE);
+    if (showField && mode === "flat") {
+      const Cp = this.P.compose; gl.useProgram(Cp.p); gl.bindVertexArray(this.vaoQuad); gl.disable(gl.BLEND);
+      gl.uniformMatrix4fv(Cp.u.u_m, false, m); gl.uniform4f(Cp.u.u_box, grid.x0, grid.y0, grid.x1, grid.y1);
+      gl.uniform1fv(Cp.u.u_w, new Float32Array(w)); gl.uniform1f(Cp.u.u_lo, LO); gl.uniform1f(Cp.u.u_hi, HI); gl.uniform3fv(Cp.u.u_ramp, new Float32Array(RAMP_RGB.flat()));
+      this.bind(Cp, 0, "u_fa", this.fa); this.bind(Cp, 1, "u_fb", this.fb); this.draw();
+    }
+    gl.bindVertexArray(null);
+    timing.field = performance.now() - t0;
+  },
+};
+const dots = {
+  id: "bsf-dots", type: "custom", renderingMode: "2d",
+  onAdd() {},
+  render(gl, opt) {
+    if (!showDots) return;
+    const f = field, D = f.P.dots, w = weightsAt(map.getZoom()), cv = map.getCanvas();
+    gl.useProgram(D.p); gl.bindVertexArray(f.vaoDots); gl.disable(gl.DEPTH_TEST); gl.disable(gl.STENCIL_TEST);
+    gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    gl.uniformMatrix4fv(D.u.u_m, false, opt.modelViewProjectionMatrix); gl.uniform1fv(D.u.u_w, new Float32Array(w));
+    gl.uniform2f(D.u.u_vp, cv.clientWidth, cv.clientHeight); gl.uniform1f(D.u.u_lo, LO); gl.uniform1f(D.u.u_hi, HI);
+    gl.uniform1f(D.u.u_zb, 1 + 0.1 * Math.max(map.getZoom() - FIT, 0));
+    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, nC);
+    gl.bindVertexArray(null);
+  },
+};
+
+// ---------------------------------------------------------------- layers
+for (const k of KEYS) map.addSource(k, { type: "geojson", data: geo[k], promoteId: "id" });
+map.addSource("outside", { type: "geojson", data: outside });
+map.addSource("backdrop", { type: "geojson", data: backdrop });
+const ramp = (stops, p) => ["interpolate", ["linear"], ["get", `e${p}`], ...stops.flatMap((c, i) => [LO + (HI - LO) * i / (stops.length - 1), c])];
+const colorExpr = (t, p) => {
+  const base = ramp(RAMP, p), low = (t.key === "counties" || t.key === "cells") && fade;
+  return ["case", ["boolean", ["feature-state", "hover"], false], "#f2a900", low ? ["case", ["==", ["get", `c${p}`], 2], ramp(WASH, p), base] : base];
+};
+const FADE = 0.25;
+const fadeIn = (t, peak) => {
+  const s = [];
+  if (t.z0 > 0) s.push(t.z0 - FADE, 0, t.z0 + FADE, peak); else s.push(0, peak);
+  if (t.z1 < 24) s.push(t.z1 - FADE, peak, t.z1 + FADE, 0);
+  return ["interpolate", ["linear"], ["zoom"], ...s];
+};
+const heightExpr = (t, p) => ["*", t.hmax * hScale, ["+", 0.05, ["*", 0.95, ["max", 0, ["min", 1, ["/", ["-", ["get", `e${p}`], LO], HI - LO]]]]]];
+const z = d => FIT + d;
+
+map.addLayer(field);
+for (const t of TIERS) map.addLayer({ id: `${t.key}-fill`, type: "fill", source: t.key, paint: { "fill-color": colorExpr(t, 0), "fill-opacity": fadeIn(t, 1), "fill-antialias": false } });
+map.addLayer({ id: "outside", type: "fill", source: "outside", paint: { "fill-color": "#e9edf2", "fill-antialias": false } });
+map.addLayer({ id: "backdrop", type: "fill", source: "backdrop", paint: { "fill-color": "#cfd3d8", "fill-outline-color": "#ffffff" } });
+for (const [k, peak] of [["counties", 0.5], ["cells", 0.6]]) {
+  const t = TIERS[KEYS.indexOf(k)];
+  map.addLayer({ id: `${k}-haze`, type: "fill", source: k, paint: { "fill-color": "#f4f5f7", "fill-antialias": false, "fill-opacity": fadeIn(t, ["case", ["==", ["get", "c0"], 2], peak, 0]) } });
+}
+// borders never disappear; they gain weight as you zoom in and the gradient breaks into per-unit pieces
+map.addLayer({ id: "cells-line", type: "line", source: "cells", paint: { "line-color": "#262c36", "line-width": 0.4, "line-opacity": ["interpolate", ["linear"], ["zoom"], z(2.1), 0, z(2.6), 0.28] } });
+map.addLayer({ id: "counties-line", type: "line", source: "counties", paint: { "line-color": "#262c36", "line-width": ["interpolate", ["linear"], ["zoom"], z(1), 0.3, z(4), 0.9], "line-opacity": ["interpolate", ["linear"], ["zoom"], z(0.8), 0, z(1.4), 0.45, z(4), 0.55] } });
+map.addLayer({ id: "states-line", type: "line", source: "states", paint: { "line-color": "#262c36", "line-width": ["interpolate", ["linear"], ["zoom"], z(-1.5), 0.4, z(0.5), 0.9, z(3.5), 1.7], "line-opacity": ["interpolate", ["linear"], ["zoom"], z(-1.5), 0.25, z(0), 0.55, z(2), 0.85] } });
+map.addLayer({ id: "regions-line", type: "line", source: "regions", paint: { "line-color": "#262c36", "line-width": ["interpolate", ["linear"], ["zoom"], z(-1.6), 1.2, z(-0.6), 2.4, z(0.6), 1.4], "line-opacity": 0.8 } });
+map.addLayer({ id: "nation-line", type: "line", source: "nation", paint: { "line-color": "#191c22", "line-width": 1.5, "line-opacity": 0.85 } });
+for (const t of TIERS) map.addLayer({ id: `${t.key}-hover`, type: "line", source: t.key, paint: { "line-color": "#1f2328", "line-width": ["case", ["boolean", ["feature-state", "hover"], false], 2.2, 0] } });
+for (const t of TIERS) map.addLayer({ id: `${t.key}-ext`, type: "fill-extrusion", source: t.key, layout: { visibility: "none" },
+  paint: { "fill-extrusion-color": colorExpr(t, 0), "fill-extrusion-height": heightExpr(t, 0), "fill-extrusion-opacity": fadeIn(t, 1), "fill-extrusion-vertical-gradient": true } });
+map.addLayer(dots);
+
+function applyPaint() {
+  for (const t of TIERS) {
+    map.setPaintProperty(`${t.key}-fill`, "fill-color", colorExpr(t, preset));
+    map.setPaintProperty(`${t.key}-fill`, "fill-opacity", showField ? 0 : fadeIn(t, 1));     // kept (transparent) for hover picking
+    map.setPaintProperty(`${t.key}-ext`, "fill-extrusion-color", colorExpr(t, preset));
+    map.setPaintProperty(`${t.key}-ext`, "fill-extrusion-height", heightExpr(t, preset));
+  }
+  for (const [k, peak] of [["counties", 0.5], ["cells", 0.6]])
+    map.setPaintProperty(`${k}-haze`, "fill-opacity", fadeIn(TIERS[KEYS.indexOf(k)], ["case", ["==", ["get", `c${preset}`], 2], fade && showField ? peak : 0, 0]));
+}
+function applyMode() {
+  const ext = mode === "ext", vis = on => on ? "visible" : "none";
+  for (const t of TIERS) { map.setLayoutProperty(`${t.key}-ext`, "visibility", vis(ext)); map.setLayoutProperty(`${t.key}-fill`, "visibility", vis(!ext)); }
+  for (const id of ["counties-haze", "cells-haze", "cells-line", "counties-line", "states-line", "regions-line"]) map.setLayoutProperty(id, "visibility", vis(!ext));
+  map.easeTo({ pitch: ext ? 52 : 0, bearing: ext ? -12 : 0, duration: 600 });
+}
+applyPaint();
+
+// ---------------------------------------------------------------- labels (2D overlay: ~55 labels that follow the merging bubbles)
+const lc = $("labels"), lctx = lc.getContext("2d");
+const A = { s: anchors.states, r: anchors.regions, n: anchors.nation[0] };
+function drawLabels() {
+  const dpr = devicePixelRatio || 1, W = lc.clientWidth, H = lc.clientHeight;
+  if (lc.width !== Math.round(W * dpr)) { lc.width = Math.round(W * dpr); lc.height = Math.round(H * dpr); }
+  lctx.setTransform(dpr, 0, 0, dpr, 0, 0); lctx.clearRect(0, 0, W, H);
+  if (mode === "ext") return;
+  const zz = map.getZoom(), w = weightsAt(zz), zb = 1 + 0.1 * Math.max(zz - FIT, 0);
+  const rOf = (v, lvl) => showDots ? 2 * Math.pow(16, clamp((v - LO) / (HI - LO), 0, 1)) * lvl * zb : 0;
+  const mix = (pts, ws) => { let x = 0, y = 0, t = 0; pts.forEach((p, i) => { x += p[0] * ws[i]; y += p[1] * ws[i]; t += ws[i]; }); return [x / t, y / t]; };
+  const items = [], E = f => f.properties[`e${preset}`];
+  const ws = w[2] + w[3] + w[4];
+  geo.states.features.forEach((f, i) => {
+    const r = stateRegion[i], ll = mix([A.n, A.r[r], A.s[i]], [w[0], w[1], ws]);
+    const v = (w[0] * E(geo.nation.features[0]) + w[1] * E(geo.regions.features[r]) + ws * E(f)) / (w[0] + w[1] + ws);
+    items.push({ ll, txt: f.properties.ab, a: w[2] * smooth(FIT - 0.4, FIT + 0.3, zz), font: "600 10.5px system-ui", r: rOf(v, w[0] * 1.6 + w[1] * 1.25 + ws) });
+  });
+  geo.regions.features.forEach((f, i) => items.push({ ll: mix([A.n, A.r[i]], [w[0], 1 - w[0]]), txt: `${f.properties.nm}  ${fmtN(10 ** E(f))}`, a: w[1] * (1 - w[0]), font: "700 12px system-ui", r: rOf(E(f), 1.25) }));
+  items.push({ ll: A.n, txt: `Continental US  ${fmtN(10 ** E(geo.nation.features[0]))}`, a: w[0], font: "700 12px system-ui", r: rOf(E(geo.nation.features[0]), 1.6) });
+  lctx.textAlign = "center"; lctx.textBaseline = "top"; lctx.lineJoin = "round";
+  for (const it of items) {
+    if (it.a < 0.05) continue;
+    const p = map.project(it.ll), y = showDots ? p.y + it.r + 2 : p.y - 6;
+    lctx.globalAlpha = it.a; lctx.font = it.font; lctx.lineWidth = 3.2; lctx.strokeStyle = "rgba(255,255,255,.9)"; lctx.fillStyle = "#1f2328";
+    lctx.strokeText(it.txt, p.x, y); lctx.fillText(it.txt, p.x, y);
+  }
+  lctx.globalAlpha = 1;
+}
+
+// ---------------------------------------------------------------- hover, panel, timing
+const CONF = ["high", "medium", "low"], NAMES = ["Nation", "Regions", "States", "Counties", "Cells"];
+$("wbars").innerHTML = NAMES.map((n, i) => `<div class="wrow"><span class="nm">${n}</span><span class="bar"><i id="wb${i}"></i></span><span class="pc" id="wp${i}">0%</span></div>`).join("");
+let hov = null;
+function setHover(f) {
+  if (hov && (!f || hov.source !== f.source || hov.id !== f.id)) map.setFeatureState(hov, { hover: false });
+  hov = f ? { source: f.source, id: f.id } : null; if (hov) map.setFeatureState(hov, { hover: true });
+}
+map.on("mousemove", e => {
+  const w = weightsAt(map.getZoom()), ti = w.indexOf(Math.max(...w)), t = TIERS[ti];
+  const f = map.queryRenderedFeatures(e.point, { layers: [`${t.key}-${mode === "ext" ? "ext" : "fill"}`] })[0];
+  setHover(f || null);
+  const tip = $("tip"); if (!f) { tip.style.display = "none"; return; }
+  const p = f.properties, q = preset, title = t.key === "cells" ? `Cell in ${geo.counties.features[p.ct].properties.nm}` : p.nm;
+  tip.innerHTML = `<b>${title}</b> <span class="k">${t.key}</span>
+    <div style="font-size:19px;font-weight:650;color:#5b3a9e;margin:2px 0">${fmtR(10 ** p[`e${q}`])} <span style="font-size:11px;font-weight:400;color:#656d76">per million insect records</span></div>
+    <div class="row"><span class="k">95% interval</span><span>${fmtR(p[`l${q}`])} to ${fmtR(p[`h${q}`])}</span></div>
+    <div class="row"><span class="k">Confidence</span><span>${CONF[p[`c${q}`]]}</span></div>
+    <div class="row"><span class="k">BSF / insect records</span><span>${fmtN(p[`b${q}`])} / ${fmtN(p[`n${q}`])}</span></div>`;
+  tip.style.display = "block";
+  const W = $("map").clientWidth, H = $("map").clientHeight;
+  tip.style.left = Math.min(e.point.x + 16, W - tip.offsetWidth - 4) + "px"; tip.style.top = Math.min(e.point.y + 16, H - tip.offsetHeight - 4) + "px";
+});
+map.on("mouseout", () => { setHover(null); $("tip").style.display = "none"; });
+let lastPanel = "";
+map.on("render", () => {
+  const t0 = performance.now(); drawLabels(); timing.labels = performance.now() - t0;
+  const w = weightsAt(map.getZoom()), key = w.map(x => Math.round(x * 100)).join();
+  if (key !== lastPanel) { w.forEach((x, i) => { $("wb" + i).style.width = Math.round(x * 100) + "%"; $("wp" + i).textContent = Math.round(x * 100) + "%"; }); lastPanel = key; }
+  $("hud").textContent = `zoom ${map.getZoom().toFixed(2)} (fit ${FIT.toFixed(2)})`;
+});
+setInterval(() => {
+  $("timing").textContent = `GPU join + 7 blurs + fields: ${timing.build?.toFixed(1) ?? "–"} ms per preset switch\nfield draw call (CPU side): ${timing.field?.toFixed(2) ?? "–"} ms per frame\nlabels overlay: ${timing.labels?.toFixed(2) ?? "–"} ms per frame\ngrid ${grid.w}×${grid.h} at ${grid.pxKm} km`;
+}, 500);
+
+// ---------------------------------------------------------------- controls
+const ticks = () => { const lo = 10 ** LO, hi = 10 ** HI; $("ticks").innerHTML = [lo, 10 ** ((LO * 2 + HI) / 3), 10 ** ((LO + HI * 2) / 3), hi].map(v => `<span>${fmtN(+v.toPrecision(1))}</span>`).join(""); };
+ticks();
+const windows = [...new Set(meta.presets.map(p => p.window))];
+$("winSeg").innerHTML = windows.map((w, i) => `<button data-v="${i}" class="${i ? "" : "on"}">${w.replace("-", "–")}</button>`).join("");
+let winI = 0, denI = 0;
+const seg = (id, fn) => $(id).addEventListener("click", e => { const b = e.target.closest("button"); if (!b) return; [...$(id).children].forEach(x => x.classList.toggle("on", x === b)); fn(b.dataset.v); });
+const setPreset = () => { preset = winI * 2 + denI; applyPaint(); field.dirty = true; map.triggerRepaint(); };
+seg("winSeg", v => { winI = +v; setPreset(); });
+seg("denSeg", v => { denI = +v; setPreset(); });
+seg("modeSeg", v => { mode = v; setHover(null); applyMode(); });
+$("chkField").onchange = e => { showField = e.target.checked; applyPaint(); map.triggerRepaint(); };
+$("chkDots").onchange = e => { showDots = e.target.checked; map.triggerRepaint(); };
+$("chkFade").onchange = e => { fade = e.target.checked; applyPaint(); };
+$("rHgt").oninput = e => { hScale = +e.target.value; applyPaint(); };
+$("selDetail").onchange = e => { detail = e.target.value; map.triggerRepaint(); };
+$("selDomain").onchange = e => { const d = DOMAINS[e.target.value]; LO = Math.log10(d[0]); HI = Math.log10(d[1]); ticks(); applyPaint(); map.triggerRepaint(); };
+window.fieldPoc = { map, field, timing, weightsAt, FIT, setPreset: (w, d) => { winI = w; denI = d; setPreset(); }, setMode: m => { mode = m; applyMode(); }, setDetail: d => { detail = d; map.triggerRepaint(); } };
+})().catch(e => { const el = document.getElementById("err"); el.style.display = "block"; el.textContent = "Failed: " + (e && e.message || e); console.error(e); });
+</script>
+</body>
+</html>
